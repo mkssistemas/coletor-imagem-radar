@@ -7,6 +7,14 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [0.2.1] - 2026-06-01
+
+### Corrigido
+
+- Build do container: instala `protoc`/`protobuf-dev` no stage builder do
+  `Containerfile`. O `build.rs` (tonic-prost-build) compila `proto/catalogo.proto`
+  em build; sem o `protoc` a imagem da v0.2.0 não compilava.
+
 ## [0.2.0] - 2026-06-01
 
 ### Adicionado
@@ -43,6 +51,7 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - Empacotamento OCI: `Containerfile` multi-stage + `compose.yaml`.
 - Destino S3-only (AWS S3 ou filesystem local em dev); MinIO removido.
 
-[Não lançado]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.2.0...HEAD
+[Não lançado]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/henrique-mks/coletor-imagem-radar/releases/tag/v0.1.0

@@ -14,7 +14,8 @@
 # ---- Stage 1: builder musl ----
 FROM rust:alpine AS builder
 # ring (cripto do rustls) e libsqlite3-sys compilam C → precisam de toolchain C.
-RUN apk add --no-cache build-base
+# protoc: o build.rs (tonic-prost-build) compila proto/catalogo.proto em build.
+RUN apk add --no-cache build-base protoc protobuf-dev
 WORKDIR /src
 COPY . .
 # Cache mounts (Podman/buildah): registry+git de crates e o dir target/ persistem
