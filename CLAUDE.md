@@ -18,7 +18,8 @@ cargo run -- check --limit 5        # valida config + lista a origem (dry-run, s
 cargo run -- run --once --limit 1   # uma passada do pipeline (download→processa→upload→catálogo→delete)
 cargo run -- run                    # loop contínuo (poll por produto)
 cargo run -- backfill --hours 48    # popula retroativo: varre as últimas N horas (default 48) numa passada
-cargo test                          # testes (src/nodd.rs: chaves + parser de timestamp)
+cargo run -- serve                  # servidor gRPC de consulta ao catálogo (UltimoFrame/ListarFrames)
+cargo test                          # testes (src/nodd.rs: chaves + parser; src/serve.rs: timestamp/cursor)
 cargo test source_hour_prefix       # roda um teste específico por nome
 ```
 
@@ -26,7 +27,7 @@ cargo test source_hour_prefix       # roda um teste específico por nome
 - Credenciais do **destino S3** vêm SÓ do ambiente: `AWS_ACCESS_KEY_ID`,
   `AWS_SECRET_ACCESS_KEY` (`AWS_SESSION_TOKEN` opcional). Nunca no TOML.
 - Credenciais do **Postgres** (catálogo) vêm da seção `[database]` do TOML
-  (campos discretos; ver `config.example.toml`). `run` e `migrate` exigem essa seção.
+  (campos discretos; ver `config.example.toml`). `run`, `migrate` e `serve` exigem essa seção.
 - Logs: `RUST_LOG=coletor_imagem_radar=debug` para verbosidade; `SYNC_LOG_FORMAT=json`
   para saída JSON.
 
@@ -38,8 +39,14 @@ falha em runtime (não em compile):
 e `pmtiles` (conversor MBTiles→PMTiles). `cargo build`/`cargo test` NÃO precisam
 deles; só `cargo run -- run`.
 
-Além disso, `run`/`migrate` precisam de um **Postgres** acessível (catálogo,
+Além disso, `run`/`migrate`/`serve` precisam de um **Postgres** acessível (catálogo,
 schema `imagens_satelite`). `check`, `build` e `test` NÃO precisam de banco.
+
+O `serve` também precisa das **credenciais AWS do destino** (mesmas do `run`) para
+**pré-assinar** as URLs GET dos `.pmtiles`. ⚠️ A identidade IAM que assina precisa
+de `s3:GetObject` no prefixo — o usuário de upload (`s3-satellite-uploader`, só
+`PutObject`) gera URLs que voltam **403** no fetch. O `cargo build`/`compile` do
+`.proto` é feito pelo `build.rs` via `tonic-prost-build` (sem dep externa).
 
 ## Arquitetura
 
@@ -72,17 +79,33 @@ verdade, **hypertable** TimescaleDB) + **redb** como cache quente local. No boot
 Chave do dedupe no redb: `(fonte, chave_origem)` (o `inicio` é determinístico a
 partir da chave); `fonte` é fixa (`noaa-goes-19`) até entrar uma 2ª origem.
 
+### Lado consumidor: servidor gRPC (`serve`)
+
+Pós-MVP, **sem Kafka**: o consumidor **consulta** o catálogo via gRPC (não há
+push). O servidor (`src/serve.rs`, tonic) é **só metadado** — devolve quais
+frames existem e uma **URL pré-assinada** (GET S3) do `.pmtiles`; os bytes
+trafegam por HTTP range request direto do bucket (PMTiles), nunca pelo gRPC.
+Contrato em `proto/catalogo.proto` (pacote `coletor.catalogo.v1`), compilado pelo
+`build.rs` (`tonic-prost-build`) e incluído em `src/grpc.rs` (`include_proto!`).
+Duas RPCs unárias: `UltimoFrame(produto, canal?)` e `ListarFrames(...)` (janela
+temporal, paginada por cursor sobre `inicio` — casa com o índice
+`(produto, inicio DESC)`). Lê o catálogo via `src/query.rs` e assina com o
+client concreto `AmazonS3` (`storage::build_destination_signer`).
+
 Módulos:
 
 | Módulo         | Papel |
 |----------------|-------|
-| `main.rs`      | CLI clap (`check`, `run`, `migrate`); `check` faz o smoke-test de list. |
-| `config.rs`    | Structs serde do TOML + `Config::load`/`validate`. `deny_unknown_fields`. `DatabaseConfig::url` monta a conn string. |
-| `storage.rs`   | Constrói clients `object_store`: origem anônima (`skip_signature`), destino AWS S3 (`from_env`) ou `LocalFileSystem` quando `destination.local_path` está setado. |
+| `main.rs`      | CLI clap (`check`, `run`, `backfill`, `migrate`, `serve`); `check` faz o smoke-test de list. |
+| `config.rs`    | Structs serde do TOML + `Config::load`/`validate`. `deny_unknown_fields`. `DatabaseConfig::url` monta a conn string. `GrpcConfig` (`[grpc]`: listen/url_ttl_secs/limite_pagina). |
+| `storage.rs`   | Constrói clients `object_store`: origem anônima (`skip_signature`), destino AWS S3 (`from_env`) ou `LocalFileSystem` (`local_path`). `build_destination_signer` devolve o `AmazonS3` concreto p/ pré-assinar (`None` em modo local). |
 | `nodd.rs`      | Convenções de chave NODD (prefixo da hora, chave de destino) + parser de timestamp do nome. Tem os testes. |
-| `pipeline.rs`  | Loop poll→processa por produto; janela de overlap; usa o `State` p/ dedupe e catálogo. |
+| `pipeline.rs`  | Loop poll→processa por produto; janela de overlap; usa o `State` p/ dedupe e catálogo. `FONTE` fixa (`noaa-goes-19`). |
 | `process.rs`   | Cadeia GDAL→PMTiles do C13; constantes de calibração/BBOX/resolução. |
-| `state.rs`     | Estado híbrido: catálogo Postgres (SeaORM) + cache redb. `open`/`is_done`/`mark_done`/`run_migrations` (DDL idempotente: tabela + hypertable + índice; schema deve pré-existir). |
+| `state.rs`     | Estado híbrido: catálogo Postgres (SeaORM) + cache redb. `open`/`is_done`/`mark_done`/`run_migrations` (DDL idempotente); `connect` (conexão com `search_path`, compartilhada com o `serve`). |
+| `query.rs`     | Queries read-only do catálogo p/ o gRPC: `ultimo_frame`, `listar_frames` (filtro + cursor). |
+| `serve.rs`     | Servidor gRPC (tonic): impl do serviço `Catalogo`, mapeamento `Model`→`Frame`, assinatura de URL e conversão de timestamp/cursor. Tem testes. |
+| `grpc.rs`      | Código gerado do `.proto` (`include_proto!`). |
 | `entity.rs`    | Entidade SeaORM da tabela `frames` (schema vem do `search_path`, configurável). |
 | `logging.rs`   | Init do `tracing` (texto ou JSON). |
 

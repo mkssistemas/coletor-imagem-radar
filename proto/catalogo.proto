@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+// Catálogo de imagens de satélite — API de consulta (lado consumidor).
+//
+// Serve metadado, NÃO os bytes do tile: cada Frame traz uma URL pré-assinada
+// (GET S3) que o consumidor usa para carregar o `.pmtiles` por HTTP range
+// request, direto do bucket. O servidor lê apenas a tabela `frames`.
+package coletor.catalogo.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service Catalogo {
+  // Frame mais recente de um produto (e canal, se informado). NOT_FOUND se
+  // não houver nenhum.
+  rpc UltimoFrame (UltimoFrameRequest) returns (Frame);
+
+  // Frames numa janela temporal [de, ate], do mais novo ao mais antigo.
+  // Paginado por cursor (ver ListarFramesResponse.proximo_cursor).
+  rpc ListarFrames (ListarFramesRequest) returns (ListarFramesResponse);
+}
+
+// Espelha uma linha de `imagens_satelite.frames`, mais a URL derivada do tile.
+message Frame {
+  string fonte = 1;
+  string produto = 2;
+  optional string canal = 3;
+  string chave_origem = 4;
+  string chave_destino = 5;
+  int64 tamanho_bytes = 6;
+  google.protobuf.Timestamp inicio = 7;
+  optional google.protobuf.Timestamp fim = 8;
+  google.protobuf.Timestamp processado_em = 9;
+  // URL pré-assinada (GET) do `.pmtiles` no S3. Vazia em modo de destino local.
+  string url = 10;
+  // Quando a URL acima expira (vazio se url vazia).
+  optional google.protobuf.Timestamp url_expira_em = 11;
+}
+
+message UltimoFrameRequest {
+  string produto = 1;
+  optional string canal = 2;
+  // Default: a fonte fixa atual (noaa-goes-19).
+  optional string fonte = 3;
+}
+
+message ListarFramesRequest {
+  string produto = 1;
+  optional string canal = 2;
+  optional string fonte = 3;
+  // Janela temporal sobre `inicio`. Ambos opcionais (sem limite no lado omitido).
+  optional google.protobuf.Timestamp de = 4;
+  optional google.protobuf.Timestamp ate = 5;
+  // Máximo de frames por página. 0 = default do servidor; capado no servidor.
+  uint32 limite = 6;
+  // Cursor opaco da página anterior. Vazio = primeira página.
+  optional string cursor = 7;
+}
+
+message ListarFramesResponse {
+  repeated Frame frames = 1;
+  // Presente se há mais páginas; passe em ListarFramesRequest.cursor.
+  optional string proximo_cursor = 2;
+}

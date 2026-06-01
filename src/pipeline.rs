@@ -26,7 +26,7 @@ use crate::{nodd, storage};
 
 /// Fonte das imagens. Fixa por ora (GOES-19 via NODD); vira por-fonte quando
 /// entrar uma 2ª origem (ex.: EUMETSAT) na Fase 4+.
-const FONTE: &str = "noaa-goes-19";
+pub(crate) const FONTE: &str = "noaa-goes-19";
 
 /// Setup compartilhado por [`run`] e [`backfill`]: clients de origem/destino,
 /// dir de trabalho efêmero, rampa de cor e estado persistente (catálogo

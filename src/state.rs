@@ -207,7 +207,7 @@ fn ddl_statements(schema: &str) -> Vec<String> {
 
 /// Conexão SeaORM a partir da config. `search_path` aponta pro schema do
 /// catálogo (assim a entidade, sem `schema_name` fixo, resolve `frames` nele).
-async fn connect(db_cfg: &DatabaseConfig) -> Result<DatabaseConnection> {
+pub(crate) async fn connect(db_cfg: &DatabaseConfig) -> Result<DatabaseConnection> {
     let schema = validated_schema(db_cfg)?;
     let mut opt = ConnectOptions::new(db_cfg.url());
     opt.sqlx_logging(false);

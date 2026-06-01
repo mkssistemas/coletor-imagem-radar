@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use object_store::ObjectStore;
-use object_store::aws::AmazonS3Builder;
+use object_store::aws::{AmazonS3, AmazonS3Builder};
 use object_store::local::LocalFileSystem;
 
 use crate::config::{DestinationConfig, SourceConfig};
@@ -46,4 +46,23 @@ pub fn build_destination(cfg: &DestinationConfig) -> Result<Arc<dyn ObjectStore>
         .build()
         .with_context(|| format!("construindo client de destino para '{}'", cfg.bucket))?;
     Ok(Arc::new(store))
+}
+
+/// Client do destino como tipo **concreto** `AmazonS3`, para **assinar URLs**
+/// (o servidor gRPC devolve presigned GET dos `.pmtiles`).
+///
+/// `dyn ObjectStore` não expõe o trait [`object_store::signer::Signer`], por
+/// isso este builder devolve o concreto. Em modo local (`local_path`), o
+/// filesystem não pré-assina → `Ok(None)` (o servidor devolve URL vazia).
+/// Credenciais vêm do ambiente, como em [`build_destination`].
+pub fn build_destination_signer(cfg: &DestinationConfig) -> Result<Option<Arc<AmazonS3>>> {
+    if cfg.local_path.is_some() {
+        return Ok(None);
+    }
+    let store = AmazonS3Builder::from_env()
+        .with_bucket_name(&cfg.bucket)
+        .with_region(&cfg.region)
+        .build()
+        .with_context(|| format!("construindo signer de destino para '{}'", cfg.bucket))?;
+    Ok(Some(Arc::new(store)))
 }

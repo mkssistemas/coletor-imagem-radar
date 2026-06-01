@@ -1,14 +1,18 @@
 //! Coletor de Imagem de Radar — GOES-19 (NODD → PMTiles no nosso S3).
 //!
-//! CLI: `check` (valida config + lista a origem) e `run` (loop de ingest:
-//! poll → download → processa → upload PMTiles → delete-on-success).
+//! CLI: `check` (valida config + lista a origem), `run`/`backfill` (ingest:
+//! poll → download → processa → upload PMTiles → delete-on-success), `migrate`
+//! (DDL do catálogo) e `serve` (servidor gRPC de consulta ao catálogo).
 
 mod config;
 mod entity;
+mod grpc;
 mod logging;
 mod nodd;
 mod pipeline;
 mod process;
+mod query;
+mod serve;
 mod state;
 mod storage;
 
@@ -64,6 +68,13 @@ enum Command {
     },
     /// Aplica as migrations do catálogo no Postgres (schema `imagens_satelite`).
     Migrate,
+    /// Sobe o servidor gRPC de consulta ao catálogo (UltimoFrame/ListarFrames).
+    /// Exige a seção [database] e, para assinar URLs, as credenciais AWS do destino.
+    Serve {
+        /// Endereço de bind `host:porta` (sobrescreve `grpc.listen` da config).
+        #[arg(long)]
+        listen: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -90,6 +101,7 @@ async fn main() -> Result<()> {
                 .context("subcomando `migrate` exige a seção [database] na config")?;
             state::run_migrations(db).await
         }
+        Command::Serve { listen } => serve::run(&config, listen).await,
     }
 }
 

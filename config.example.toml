@@ -33,6 +33,15 @@ dbname = "qualle"             # Timescale Cloud: "tsdb"
 # c13_color_ramp = "assets/c13_noaa.txt"
 # state_path = "data/state.db"          # cache redb do dedupe
 
+# --- Servidor gRPC de consulta ao catálogo (subcomando `serve`; defaults). ---
+# Devolve metadado + URL pré-assinada (GET S3) do .pmtiles. Assinar exige as
+# credenciais AWS do destino no ambiente (mesmas do `run`); a identidade que
+# assina precisa de s3:GetObject no prefixo, senão o GET volta 403.
+# [grpc]
+# listen = "0.0.0.0:50051"   # sobrescrevível por --listen
+# url_ttl_secs = 3600        # validade das URLs pré-assinadas
+# limite_pagina = 500        # teto/default de frames por página em ListarFrames
+
 # --- Produtos (Fase 2+). No esqueleto podem ficar vazios. ---
 
 [[products]]

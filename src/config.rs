@@ -25,6 +25,35 @@ pub struct Config {
     /// precisa de banco; `run`/`migrate` exigem (erro claro se ausente).
     #[serde(default)]
     pub database: Option<DatabaseConfig>,
+    /// Servidor gRPC de consulta ao catálogo (subcomando `serve`).
+    #[serde(default)]
+    pub grpc: GrpcConfig,
+}
+
+/// Parâmetros do servidor gRPC (`serve`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrpcConfig {
+    /// Endereço de bind (`host:porta`). Sobrescrevível por `--listen`.
+    #[serde(default = "default_grpc_listen")]
+    pub listen: String,
+    /// Validade (segundos) das URLs pré-assinadas devolvidas em `Frame.url`.
+    #[serde(default = "default_url_ttl_secs")]
+    pub url_ttl_secs: u64,
+    /// Teto de frames por página em `ListarFrames` (também o default quando o
+    /// request pede `limite = 0`).
+    #[serde(default = "default_grpc_page_limit")]
+    pub limite_pagina: u32,
+}
+
+impl Default for GrpcConfig {
+    fn default() -> Self {
+        Self {
+            listen: default_grpc_listen(),
+            url_ttl_secs: default_url_ttl_secs(),
+            limite_pagina: default_grpc_page_limit(),
+        }
+    }
 }
 
 /// Parâmetros do pipeline de ingest+processamento.
@@ -174,6 +203,18 @@ fn default_state_path() -> String {
 
 fn default_pg_port() -> u16 {
     5432
+}
+
+fn default_grpc_listen() -> String {
+    "0.0.0.0:50051".to_string()
+}
+
+fn default_url_ttl_secs() -> u64 {
+    3600
+}
+
+fn default_grpc_page_limit() -> u32 {
+    500
 }
 
 fn default_schema() -> String {
