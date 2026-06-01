@@ -16,6 +16,23 @@ prefix = "goes19"
 # Dev/teste: grava no filesystem local em vez do S3 (descomente).
 # local_path = "./out-s3"
 
+# --- Catálogo (Fase 3): Postgres. Credenciais AQUI (diferente do S3). ---
+# Exigido por `run` e `migrate`; `check` não precisa.
+[database]
+host = "localhost"
+port = 5432
+user = "qualle"
+password = "troque-me"
+dbname = "qualle"             # Timescale Cloud: "tsdb"
+# schema = "imagens_satelite" # default; deve já existir (admin cria + dá CREATE ao role)
+# sslmode = "require"         # opcional: disable | prefer | require | ... (Timescale Cloud: require)
+
+# --- Pipeline (opcional; mostrados os defaults). ---
+# [pipeline]
+# work_dir = "data"                     # disco efêmero do bruto
+# c13_color_ramp = "assets/c13_noaa.txt"
+# state_path = "data/state.db"          # cache redb do dedupe
+
 # --- Produtos (Fase 2+). No esqueleto podem ficar vazios. ---
 
 [[products]]

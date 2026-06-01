@@ -4,10 +4,12 @@
 //! poll → download → processa → upload PMTiles → delete-on-success).
 
 mod config;
+mod entity;
 mod logging;
 mod nodd;
 mod pipeline;
 mod process;
+mod state;
 mod storage;
 
 use std::path::PathBuf;
@@ -50,6 +52,8 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         limit: usize,
     },
+    /// Aplica as migrations do catálogo no Postgres (schema `imagens_satelite`).
+    Migrate,
 }
 
 #[tokio::main]
@@ -68,6 +72,13 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Check { limit } => check(&config, limit).await,
         Command::Run { once, limit } => pipeline::run(&config, once, limit).await,
+        Command::Migrate => {
+            let db = config
+                .database
+                .as_ref()
+                .context("subcomando `migrate` exige a seção [database] na config")?;
+            state::run_migrations(db).await
+        }
     }
 }
 

@@ -13,16 +13,19 @@ ABI C13 (NetCDF) em **PMTiles** prontos para mapa. Comentários e docs em pt-BR.
 
 ```sh
 cargo build                         # compila
+cargo run -- migrate                # aplica as migrations do catálogo (schema imagens_satelite)
 cargo run -- check --limit 5        # valida config + lista a origem (dry-run, sem escrever)
-cargo run -- run --once --limit 1   # uma passada do pipeline (download→processa→upload→delete)
+cargo run -- run --once --limit 1   # uma passada do pipeline (download→processa→upload→catálogo→delete)
 cargo run -- run                    # loop contínuo (poll por produto)
-cargo test                          # testes (hoje só em src/nodd.rs)
+cargo test                          # testes (src/nodd.rs: chaves + parser de timestamp)
 cargo test source_hour_prefix       # roda um teste específico por nome
 ```
 
 - Config: `-c/--config` (default `config.toml`). Copie `config.example.toml`.
-- Credenciais do destino vêm SÓ do ambiente: `AWS_ACCESS_KEY_ID`,
+- Credenciais do **destino S3** vêm SÓ do ambiente: `AWS_ACCESS_KEY_ID`,
   `AWS_SECRET_ACCESS_KEY` (`AWS_SESSION_TOKEN` opcional). Nunca no TOML.
+- Credenciais do **Postgres** (catálogo) vêm da seção `[database]` do TOML
+  (campos discretos; ver `config.example.toml`). `run` e `migrate` exigem essa seção.
 - Logs: `RUST_LOG=coletor_imagem_radar=debug` para verbosidade; `SYNC_LOG_FORMAT=json`
   para saída JSON.
 
@@ -34,14 +37,18 @@ falha em runtime (não em compile):
 e `pmtiles` (conversor MBTiles→PMTiles). `cargo build`/`cargo test` NÃO precisam
 deles; só `cargo run -- run`.
 
+Além disso, `run`/`migrate` precisam de um **Postgres** acessível (catálogo,
+schema `imagens_satelite`). `check`, `build` e `test` NÃO precisam de banco.
+
 ## Arquitetura
 
 Fluxo do pipeline (`src/pipeline.rs` → `src/process.rs`), por produto e por poll:
 
-1. **Poll**: lista o prefixo da hora UTC corrente na origem
-   (`nodd::source_hour_prefix`, layout NODD `<Produto>/<AAAA>/<DDD>/<HH>/`, onde
-   DDD é dia juliano). Filtra por canal via substring `"<canal>_G19"` (ex.
-   `C13_G19`); produto sem `channel` não filtra.
+1. **Poll**: lista os prefixos da hora UTC corrente **e da anterior** (janela de
+   overlap p/ chegadas tardias) na origem (`nodd::source_hour_prefix`, layout NODD
+   `<Produto>/<AAAA>/<DDD>/<HH>/`, onde DDD é dia juliano). Filtra por canal via
+   substring `"<canal>_G19"` (ex. `C13_G19`); produto sem `channel` não filtra.
+   Pula o que o dedupe (`state::State::is_done`, redb) já marcou como processado.
 2. **Download**: GET anônimo em stream → disco efêmero (`pipeline.work_dir`,
    default `data/`). Pula se o `.nc` já existe em disco.
 3. **Processa** (`process::process` despacha por `product.name`): só
@@ -51,22 +58,31 @@ Fluxo do pipeline (`src/pipeline.rs` → `src/process.rs`), por produto e por po
    (`gdal_translate` + `gdaladdo`) → PMTiles (`pmtiles convert`).
 4. **Upload**: PUT do `.pmtiles` no destino, sob a chave de
    `nodd::dest_pmtiles_key` (reaproveita `AAAA/DDD/HH` da origem, troca extensão).
-5. **Delete-on-success**: só após o upload OK apaga o `.nc` e o `.pmtiles` local.
-   Erro NÃO marca como visto → retentado no próximo poll.
+5. **Catálogo**: `state::State::mark_done` grava 1 linha em `imagens_satelite.frames`
+   (hypertable TimescaleDB particionada em `inicio`; insert idempotente
+   `ON CONFLICT (fonte, chave_origem, inicio) DO NOTHING`) e marca o redb. Timestamps
+   `inicio`/`fim` vêm de `nodd::parse_frame_times` (tokens `s`/`e` do nome).
+6. **Delete-on-success**: só após upload **e** catálogo OK apaga o `.nc` e o `.pmtiles`
+   local. Erro em qualquer ponto NÃO cataloga → retentado no próximo poll.
 
-Dedupe é **em memória** (`HashSet` em `pipeline::run`) — some ao reiniciar
-(persistência é trabalho futuro).
+Dedupe é **persistente** (Fase 3): catálogo durável no **Postgres** (fonte de
+verdade, **hypertable** TimescaleDB) + **redb** como cache quente local. No boot,
+`State::open` hidrata o redb com as chaves da janela recente (~48h) do catálogo.
+Chave do dedupe no redb: `(fonte, chave_origem)` (o `inicio` é determinístico a
+partir da chave); `fonte` é fixa (`noaa-goes-19`) até entrar uma 2ª origem.
 
 Módulos:
 
 | Módulo         | Papel |
 |----------------|-------|
-| `main.rs`      | CLI clap (`check`, `run`); subcomando `check` faz o smoke-test de list. |
-| `config.rs`    | Structs serde do TOML + `Config::load`/`validate`. `deny_unknown_fields`. |
+| `main.rs`      | CLI clap (`check`, `run`, `migrate`); `check` faz o smoke-test de list. |
+| `config.rs`    | Structs serde do TOML + `Config::load`/`validate`. `deny_unknown_fields`. `DatabaseConfig::url` monta a conn string. |
 | `storage.rs`   | Constrói clients `object_store`: origem anônima (`skip_signature`), destino AWS S3 (`from_env`) ou `LocalFileSystem` quando `destination.local_path` está setado. |
-| `nodd.rs`      | Convenções de chave NODD (prefixo da hora, chave de destino). Tem os testes. |
-| `pipeline.rs`  | Loop poll→processa por produto; dedupe em memória. |
+| `nodd.rs`      | Convenções de chave NODD (prefixo da hora, chave de destino) + parser de timestamp do nome. Tem os testes. |
+| `pipeline.rs`  | Loop poll→processa por produto; janela de overlap; usa o `State` p/ dedupe e catálogo. |
 | `process.rs`   | Cadeia GDAL→PMTiles do C13; constantes de calibração/BBOX/resolução. |
+| `state.rs`     | Estado híbrido: catálogo Postgres (SeaORM) + cache redb. `open`/`is_done`/`mark_done`/`run_migrations` (DDL idempotente: tabela + hypertable + índice; schema deve pré-existir). |
+| `entity.rs`    | Entidade SeaORM da tabela `frames` (schema vem do `search_path`, configurável). |
 | `logging.rs`   | Init do `tracing` (texto ou JSON). |
 
 ## Constantes do C13 (em `src/process.rs`)

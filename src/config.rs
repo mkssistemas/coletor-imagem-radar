@@ -21,6 +21,10 @@ pub struct Config {
     /// Parâmetros do pipeline de processamento (Fase 2+).
     #[serde(default)]
     pub pipeline: PipelineConfig,
+    /// Conexão com o Postgres do catálogo (Fase 3). Opcional: `check` não
+    /// precisa de banco; `run`/`migrate` exigem (erro claro se ausente).
+    #[serde(default)]
+    pub database: Option<DatabaseConfig>,
 }
 
 /// Parâmetros do pipeline de ingest+processamento.
@@ -33,6 +37,9 @@ pub struct PipelineConfig {
     /// Arquivo de rampa de cor (gdaldem color-relief) para o C13. Em °C.
     #[serde(default = "default_c13_ramp")]
     pub c13_color_ramp: String,
+    /// Caminho do índice redb (cache quente do dedupe, Fase 3).
+    #[serde(default = "default_state_path")]
+    pub state_path: String,
 }
 
 impl Default for PipelineConfig {
@@ -40,8 +47,65 @@ impl Default for PipelineConfig {
         Self {
             work_dir: default_work_dir(),
             c13_color_ramp: default_c13_ramp(),
+            state_path: default_state_path(),
         }
     }
+}
+
+/// Conexão com o Postgres do catálogo (campos discretos; a URL é montada em
+/// [`DatabaseConfig::url`]). As credenciais ficam aqui no TOML — diferente do
+/// destino S3, cujas credenciais vêm do ambiente.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseConfig {
+    pub host: String,
+    #[serde(default = "default_pg_port")]
+    pub port: u16,
+    pub user: String,
+    #[serde(default)]
+    pub password: String,
+    pub dbname: String,
+    /// Schema do catálogo. O `migrate` cria; a conexão usa via `search_path`.
+    /// Identificador simples `[a-z0-9_]` (validado em runtime).
+    #[serde(default = "default_schema")]
+    pub schema: String,
+    /// `sslmode` do libpq (`disable`, `prefer`, `require`, ...). Omitido = default do driver.
+    #[serde(default)]
+    pub sslmode: Option<String>,
+}
+
+impl DatabaseConfig {
+    /// Monta a URL `postgres://...` para o sea-orm/sqlx, com `user`/`password`
+    /// percent-encoded (suporta caracteres reservados na senha).
+    pub fn url(&self) -> String {
+        let mut url = format!(
+            "postgres://{}:{}@{}:{}/{}",
+            pct(&self.user),
+            pct(&self.password),
+            self.host,
+            self.port,
+            self.dbname,
+        );
+        if let Some(mode) = &self.sslmode
+            && !mode.is_empty()
+        {
+            url.push_str("?sslmode=");
+            url.push_str(mode);
+        }
+        url
+    }
+}
+
+/// Percent-encode de userinfo (RFC 3986 unreserved passa direto; o resto vira `%XX`).
+fn pct(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Bucket de origem no NOAA NODD — leitura anônima, sem assinatura.
@@ -102,6 +166,18 @@ fn default_work_dir() -> String {
 
 fn default_c13_ramp() -> String {
     "assets/c13_noaa.txt".to_string()
+}
+
+fn default_state_path() -> String {
+    "data/state.db".to_string()
+}
+
+fn default_pg_port() -> u16 {
+    5432
+}
+
+fn default_schema() -> String {
+    "imagens_satelite".to_string()
 }
 
 impl Config {
