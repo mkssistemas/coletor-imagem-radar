@@ -9,7 +9,7 @@ region = "us-east-1"
 
 [destination]
 # Nosso S3 (AWS). Destino dos PMTiles.
-bucket = "qualle-goes19"
+bucket = "qualle-satellite-data"
 region = "us-east-1"
 # Prefixo-raiz das chaves no destino (layout normalizado do plano).
 prefix = "goes19"
