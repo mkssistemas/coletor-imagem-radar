@@ -10,3 +10,7 @@
 /out-s3
 # Credenciais AWS para validação local (export AWS_*). Nunca commitado.
 /aws.env
+# IDE
+.idea/
+*.swp
+*.swo
