@@ -7,7 +7,7 @@
 #   - catalogo:    nada extra      (servidor gRPC de consulta)
 [workspace]
 resolver = "3"
-members = ["crates/comum", "crates/coletor-c13", "crates/coletor-glm", "crates/catalogo"]
+members = ["crates/comum", "crates/coletor-c13", "crates/coletor-glm", "crates/catalogo", "crates/visor-raios"]
 
 [workspace.package]
 version = "0.3.0"
@@ -16,6 +16,8 @@ edition = "2024"
 # Versões pinadas e compartilhadas pelos crates (política: versão testada localmente).
 [workspace.dependencies]
 anyhow = "1.0.102"
+# Servidor HTTP do visor-raios (serve o mapa + /raios.geojson).
+axum = "0.8.6"
 bytes = "1.11.1"
 clap = { version = "4.6.1", features = ["derive"] }
 futures = "0.3.32"

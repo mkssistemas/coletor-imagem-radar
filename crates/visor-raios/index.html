@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>Raios GLM + C13 — animação</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    html, body, #mapa { height: 100%; margin: 0; background: #0a0d14; }
+    #info {
+      position: absolute; z-index: 1000; top: 8px; right: 8px;
+      background: rgba(0,0,0,.72); color: #eee; border-radius: 6px;
+      padding: 8px 10px; font: 13px/1.45 system-ui, sans-serif; min-width: 184px;
+    }
+    #info b { color: #fff; }
+    #info .clk { font-variant-numeric: tabular-nums; color: #ffd27f; }
+    #info .err { color: #ff8866; }
+    #info .leg { color: #aab; font-size: 11px; margin-top: 4px; }
+    #info .c13 { color: #9cd; font-size: 11px; }
+    #barraWrap {
+      position: absolute; z-index: 1000; left: 8px; right: 8px; bottom: 8px;
+      height: 4px; background: rgba(255,255,255,.15); border-radius: 2px;
+    }
+    #barra { height: 100%; width: 0; background: #ffb347; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <div id="mapa"></div>
+  <div id="info">
+    <div><b id="tot">…</b> raios · últimas <b id="jan">3</b>h</div>
+    <div>playhead <span class="clk" id="relogio">--:--:--</span></div>
+    <div class="c13">C13: <span id="c13t">—</span></div>
+    <div class="leg">tamanho/brilho = raios agrupados na célula</div>
+  </div>
+  <div id="barraWrap"><div id="barra"></div></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/pmtiles@3.2.1/dist/pmtiles.js"></script>
+  <script>
+    // ===== parâmetros (ajuste fino) =====
+    const LOOP_MS   = 30000;   // varre a janela inteira uma vez
+    const TAIL_FRAC = 0.04;    // rastro = fração da janela (fino → wavefront)
+    // Tamanhos-base em z4 (continental). ENCOLHEM ao aproximar: afastado = pontos
+    // grandes p/ leitura; de perto ~metade, p/ não tapar o mapa. clamp 0.5..1.4.
+    const CELL      = 14;      // grão do agrupamento em z4 (px)
+    const R_MIN     = 3;       // raio mínimo do blob em z4 (px)
+    const R_MAX     = 10;      // raio máximo do blob em z4 (px)
+    const C13_OPACITY = 0.7;
+    const REFRESH_RAIOS_MS  = 30000;
+    const REFRESH_FRAMES_MS = 60000;
+
+    // ===== mapa =====
+    const mapa = L.map('mapa', { preferCanvas: true }).setView([-21.5, -60], 4);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      { maxZoom: 10, attribution: '© OpenStreetMap, © CARTO' }).addTo(mapa);
+
+    // ===== canvas dos raios (z 450 > tilePane 200) =====
+    const cv = document.createElement('canvas');
+    cv.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:450';
+    mapa.getContainer().appendChild(cv);
+    const ctx = cv.getContext('2d');
+    function resize() {
+      const s = mapa.getSize(), dpr = window.devicePixelRatio || 1;
+      cv.width = s.x * dpr; cv.height = s.y * dpr;
+      cv.style.width = s.x + 'px'; cv.style.height = s.y + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    resize();
+    mapa.on('resize', resize);
+
+    // ===== raios =====
+    let dados = [];
+    let t0 = 0, t1 = 0, tail = 1, eMax = 1e-30;
+
+    async function carregarRaios() {
+      try {
+        const r = await fetch('/raios.geojson', { cache: 'no-store' });
+        if (!r.ok) { erro('erro ' + r.status); return; }
+        const gj = await r.json();
+        dados = gj.features.map(f => ({
+          lon: f.geometry.coordinates[0], lat: f.geometry.coordinates[1],
+          t: f.properties.t, e: f.properties.e || 0,
+        })).sort((a, b) => a.t - b.t);
+        eMax = Math.max(1e-30, ...dados.map(d => d.e));
+        t1 = gj.gerado; t0 = t1 - gj.janela_min * 60000;
+        tail = (t1 - t0) * TAIL_FRAC;
+        document.getElementById('tot').textContent = gj.total.toLocaleString('pt-BR');
+        document.getElementById('jan').textContent = (gj.janela_min / 60).toFixed(gj.janela_min % 60 ? 1 : 0);
+      } catch (e) { erro('falha: ' + e); }
+    }
+    function erro(msg) {
+      document.getElementById('relogio').innerHTML = '<span class="err">' + msg + '</span>';
+    }
+    function intensidade(e) { return e ? Math.min(1, Math.sqrt(e / eMax)) : 0.12; }
+
+    // ===== C13 (PMTiles raster sincronizado ao playhead) =====
+    let frames = [], frameAtual = null;
+    async function carregarFrames() {
+      try {
+        const r = await fetch('/frames.json', { cache: 'no-store' });
+        if (!r.ok) return;
+        const arr = await r.json();
+        const antigos = new Map(frames.map(f => [f.t, f]));
+        frames = arr.map(f => {
+          const ex = antigos.get(f.t);
+          return (ex && ex.url === f.url) ? ex : { t: f.t, url: f.url, layer: null };
+        }).sort((a, b) => a.t - b.t);
+      } catch (_) { /* sem C13 não impede os raios */ }
+    }
+    function camadaDe(f) {
+      if (!f.layer) {
+        const p = new pmtiles.PMTiles(f.url);
+        f.layer = pmtiles.leafletRasterLayer(p, { opacity: C13_OPACITY, zIndex: 250, attribution: '' });
+      }
+      return f.layer;
+    }
+    function sincronizarC13(head) {
+      let escolhido = null;
+      for (const f of frames) { if (f.t <= head) escolhido = f; else break; }
+      if (!escolhido && frames.length) escolhido = frames[0];
+      if (escolhido === frameAtual) return;
+      const anterior = frameAtual;
+      frameAtual = escolhido;
+      if (frameAtual) {
+        const nova = camadaDe(frameAtual).addTo(mapa);
+        const limpar = () => {
+          if (anterior && anterior.layer && anterior !== frameAtual) mapa.removeLayer(anterior.layer);
+        };
+        nova.once('load', limpar);
+        setTimeout(limpar, 500);
+        document.getElementById('c13t').textContent =
+          new Date(frameAtual.t).toLocaleTimeString('pt-BR');
+      } else if (anterior && anterior.layer) {
+        mapa.removeLayer(anterior.layer);
+        document.getElementById('c13t').textContent = '—';
+      }
+    }
+
+    // ===== loop =====
+    const barra = document.getElementById('barra');
+    const relogio = document.getElementById('relogio');
+    let inicio = performance.now();
+    const TAU = Math.PI * 2;
+
+    function quadro(now) {
+      requestAnimationFrame(quadro);
+      const s = mapa.getSize();
+      ctx.clearRect(0, 0, s.x, s.y);
+      if (!dados.length && !frames.length) return;
+
+      const frac = ((now - inicio) % LOOP_MS) / LOOP_MS;
+      const head = t0 + frac * (t1 - t0);
+      sincronizarC13(head);
+
+      // escala por zoom INVERTIDA: afastado = maior, perto = menor (até ~metade)
+      const fz = Math.min(1.4, Math.max(0.5, Math.pow(2, (4 - mapa.getZoom()) * 0.3)));
+      const cell = CELL * fz, rMin = R_MIN * fz, rMax = R_MAX * fz;
+
+      // ---- agrupa os flashes da crista em células (px de tela, dim. por zoom) ----
+      const celulas = new Map();   // "cx_cy" -> {sx, sy, w}
+      for (const d of dados) {
+        const age = head - d.t;
+        if (age < 0 || age > tail) continue;
+        const p = mapa.latLngToContainerPoint([d.lat, d.lon]);
+        if (p.x < -40 || p.y < -40 || p.x > s.x + 40 || p.y > s.y + 40) continue;
+        const k = 1 - age / tail;
+        const w = (k * k) * (0.4 + 0.6 * intensidade(d.e));   // peso = recência × energia
+        const key = Math.floor(p.x / cell) + '_' + Math.floor(p.y / cell);
+        let c = celulas.get(key);
+        if (!c) { c = { sx: 0, sy: 0, w: 0 }; celulas.set(key, c); }
+        c.sx += p.x * w; c.sy += p.y * w; c.w += w;
+      }
+      // raio do blob ∝ √(peso agregado) → grupos densos ficam grandes (na escala do zoom)
+      const raioDe = w => Math.max(rMin, Math.min(rMax, rMin + 7 * fz * Math.sqrt(w)));
+
+      // passe 1 — halo aditivo (brilho onde a tempestade é densa)
+      ctx.globalCompositeOperation = 'lighter';
+      for (const c of celulas.values()) {
+        if (c.w <= 0) continue;
+        const x = c.sx / c.w, y = c.sy / c.w, r = raioDe(c.w) * 2.2;
+        const a = Math.min(0.85, 0.18 + 0.22 * Math.sqrt(c.w));
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, `rgba(120,215,255,${a})`);
+        g.addColorStop(1, 'rgba(50,130,255,0)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+      }
+      // passe 2 — blob com contorno escuro + núcleo branco-quente→ciano (visível em qualquer fundo)
+      ctx.globalCompositeOperation = 'source-over';
+      for (const c of celulas.values()) {
+        if (c.w <= 0) continue;
+        const x = c.sx / c.w, y = c.sy / c.w, r = raioDe(c.w);
+        ctx.globalAlpha = 0.55; ctx.fillStyle = '#04101e';   // contorno escuro
+        ctx.beginPath(); ctx.arc(x, y, r + 1.8, 0, TAU); ctx.fill();
+        ctx.globalAlpha = 1;
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0.0, 'rgba(245,252,255,1)');
+        g.addColorStop(0.5, 'rgba(120,225,255,1)');
+        g.addColorStop(1.0, 'rgba(55,165,255,0.9)');
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
+      barra.style.width = (frac * 100) + '%';
+      relogio.textContent = new Date(head).toLocaleTimeString('pt-BR');
+    }
+
+    requestAnimationFrame(quadro);
+    carregarRaios(); carregarFrames();
+    setInterval(carregarRaios, REFRESH_RAIOS_MS);
+    setInterval(carregarFrames, REFRESH_FRAMES_MS);
+  </script>
+</body>
+</html>

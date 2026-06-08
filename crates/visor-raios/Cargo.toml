@@ -1,0 +1,24 @@
+# Visor de raios: app simples que lê os flashes (GLM) dos últimos N minutos do
+# catálogo gRPC (`ListarRaios`) e os plota num mapa Leaflet. Não toca o Postgres
+# nem o S3 — é só um cliente do `catalogo serve`.
+[package]
+name = "visor-raios"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "visor-raios"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+tokio = { workspace = true, features = ["net"] }
+tonic.workspace = true
+tonic-prost.workspace = true
+axum.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true
