@@ -2,8 +2,9 @@
 //!
 //! Expõe **metadado**, não bytes de tile: cada [`Frame`] devolvido traz uma URL
 //! pré-assinada (GET S3) do `.pmtiles`, que o consumidor carrega por HTTP range
-//! request direto do bucket. Lê só a tabela `frames` (via [`crate::query`]) e
-//! assina URLs com o client concreto de destino (via [`crate::storage`]).
+//! request direto do bucket. Já os **raios** (flashes GLM) trafegam inline. Lê
+//! o catálogo via [`comum::query`] e assina URLs com o client concreto de
+//! destino (via [`comum::storage`]).
 
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
@@ -18,10 +19,13 @@ use time::OffsetDateTime;
 use tonic::{Request, Response, Status};
 use tracing::{info, warn};
 
-use crate::config::Config;
 use crate::grpc::catalogo_server::{Catalogo, CatalogoServer};
-use crate::grpc::{Frame, ListarFramesRequest, ListarFramesResponse, UltimoFrameRequest};
-use crate::{entity, pipeline, query, state, storage};
+use crate::grpc::{
+    Frame, ListarFramesRequest, ListarFramesResponse, ListarRaiosRequest, ListarRaiosResponse,
+    Raio, UltimoFrameRequest,
+};
+use comum::config::Config;
+use comum::{entity, query, raio, state, storage};
 
 /// Sobe o servidor gRPC. Exige a seção `[database]` (como `run`/`migrate`); as
 /// credenciais AWS do destino (ambiente) são necessárias para assinar URLs.
@@ -114,7 +118,7 @@ impl Catalogo for CatalogoService {
         if req.produto.is_empty() {
             return Err(Status::invalid_argument("produto é obrigatório"));
         }
-        let fonte = req.fonte.as_deref().unwrap_or(pipeline::FONTE);
+        let fonte = req.fonte.as_deref().unwrap_or(comum::FONTE);
 
         let modelo = query::ultimo_frame(&self.db, fonte, &req.produto, req.canal.as_deref())
             .await
@@ -132,7 +136,7 @@ impl Catalogo for CatalogoService {
         if req.produto.is_empty() {
             return Err(Status::invalid_argument("produto é obrigatório"));
         }
-        let fonte = req.fonte.as_deref().unwrap_or(pipeline::FONTE);
+        let fonte = req.fonte.as_deref().unwrap_or(comum::FONTE);
 
         // 0 = default do servidor; senão, capa no teto configurado.
         let limite = if req.limite == 0 {
@@ -176,6 +180,71 @@ impl Catalogo for CatalogoService {
             frames,
             proximo_cursor,
         }))
+    }
+
+    async fn listar_raios(
+        &self,
+        request: Request<ListarRaiosRequest>,
+    ) -> Result<Response<ListarRaiosResponse>, Status> {
+        let req = request.into_inner();
+        let fonte = req.fonte.as_deref().unwrap_or(comum::FONTE);
+
+        // 0 = default do servidor; senão, capa no teto configurado.
+        let limite = if req.limite == 0 {
+            self.limite_pagina
+        } else {
+            req.limite.min(self.limite_pagina)
+        } as u64;
+
+        let cursor = match req.cursor.as_deref() {
+            Some(c) => {
+                Some(decode_cursor(c).ok_or_else(|| Status::invalid_argument("cursor inválido"))?)
+            }
+            None => None,
+        };
+
+        // BBOX só é aplicado se os quatro lados vierem; senão, toda a cobertura.
+        let bbox = match (req.oeste, req.sul, req.leste, req.norte) {
+            (Some(o), Some(s), Some(l), Some(n)) => Some([o, s, l, n]),
+            _ => None,
+        };
+
+        let filtro = query::ListarRaiosFiltro {
+            fonte,
+            bbox,
+            de: req.de.as_ref().and_then(from_proto_ts),
+            ate: req.ate.as_ref().and_then(from_proto_ts),
+            qualidade_max: req.qualidade_max.unwrap_or(0) as i16,
+            cursor,
+            limite,
+        };
+        let modelos = query::listar_raios(&self.db, &filtro)
+            .await
+            .map_err(|e| Status::internal(format!("{e:#}")))?;
+
+        // Página cheia ⇒ provavelmente há mais; cursor = `tempo` do último.
+        let proximo_cursor = (modelos.len() as u64 == limite)
+            .then(|| modelos.last().map(|m| encode_cursor(m.tempo)))
+            .flatten();
+
+        let raios = modelos.into_iter().map(modelo_para_raio).collect();
+
+        Ok(Response::new(ListarRaiosResponse {
+            raios,
+            proximo_cursor,
+        }))
+    }
+}
+
+/// Converte um `raio::raios::Model` em `Raio` (sem assinatura — pontos inline).
+fn modelo_para_raio(m: raio::raios::Model) -> Raio {
+    Raio {
+        tempo: Some(to_proto_ts(m.tempo)),
+        lat: m.lat,
+        lon: m.lon,
+        energia: m.energia,
+        area: m.area,
+        qualidade: m.qualidade as u32,
     }
 }
 

@@ -1,27 +1,60 @@
-# Coletor de Imagem de Radar (GOES-19 → PMTiles).
+# Coletor de Imagem de Radar (GOES-19) — 3 serviços, imagens separadas.
 #
-# A imagem é multi-stage (ver Containerfile): compila o binário Rust em musl e
-# roda sobre osgeo/gdal:alpine-normal. Build via: podman compose build.
+#   catalogo      → servidor gRPC de consulta (frames + raios) e `migrate`
+#   coletor-c13   → ABI C13: raster → PMTiles no S3 → catálogo `frames`
+#   coletor-glm   → GLM LCFA: pontos de raio → catálogo `raios`
+#
+# Cada coletor tem seu PRÓPRIO config.toml com APENAS o seu produto (o loop
+# itera todos os `[[products]]` aplicando a mesma cauda). Arquivos de config e
+# credenciais ficam fora da imagem (gitignored).
 #
 # Credenciais:
-#   - S3 do destino: dotenv aws.env (AWS_ACCESS_KEY_ID/SECRET) — gitignored.
-#   - Postgres do catálogo: na seção [database] do config.toml (montado abaixo).
+#   - S3 destino (catalogo p/ assinar URLs; coletor-c13 p/ upload): dotenv aws.env.
+#   - S3 origem (coletor-glm): leitura anônima — sem credenciais.
+#   - Postgres do catálogo: seção [database] de cada config.toml.
+#
+# Migrate (uma vez, antes de subir): podman compose run --rm catalogo migrate
 services:
-  coletor:
+  catalogo:
     build:
       context: .
-      dockerfile: Containerfile
-    image: coletor-imagem-radar:latest
-    # config.toml fica fora da imagem (gitignored). Montado read-only no cwd.
+      dockerfile: Containerfile.catalogo
+    image: catalogo:latest
+    ports:
+      - "50051:50051"
     volumes:
-      - ./config.toml:/app/config.toml:ro
-    # Creds AWS do destino S3. aws.env é dotenv puro (KEY=value, sem 'export').
+      - ./config.catalogo.toml:/app/config.toml:ro
+    # AWS_* necessárias para pré-assinar as URLs GET dos .pmtiles.
     env_file:
       - aws.env
     environment:
-      RUST_LOG: ${RUST_LOG:-coletor_imagem_radar=info}
+      RUST_LOG: ${RUST_LOG:-catalogo=info,comum=info}
       SYNC_LOG_FORMAT: ${SYNC_LOG_FORMAT:-}
     restart: unless-stopped
-    # Default: loop contínuo (CMD ["run"]). Para um one-shot, rode:
-    #   podman compose run --rm coletor run --once --limit 1
-    #   podman compose run --rm coletor migrate
+
+  coletor-c13:
+    build:
+      context: .
+      dockerfile: Containerfile.coletor-c13
+    image: coletor-c13:latest
+    volumes:
+      - ./config.coletor-c13.toml:/app/config.toml:ro
+    env_file:
+      - aws.env
+    environment:
+      RUST_LOG: ${RUST_LOG:-coletor_c13=info,comum=info}
+      SYNC_LOG_FORMAT: ${SYNC_LOG_FORMAT:-}
+    restart: unless-stopped
+
+  coletor-glm:
+    build:
+      context: .
+      dockerfile: Containerfile.coletor-glm
+    image: coletor-glm:latest
+    volumes:
+      - ./config.coletor-glm.toml:/app/config.toml:ro
+    # Sem env_file: origem é anônima e o GLM não escreve no S3.
+    environment:
+      RUST_LOG: ${RUST_LOG:-coletor_glm=info,comum=info}
+      SYNC_LOG_FORMAT: ${SYNC_LOG_FORMAT:-}
+    restart: unless-stopped

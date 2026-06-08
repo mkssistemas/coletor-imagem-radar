@@ -1,0 +1,20 @@
+# Coletor ABI C13: raster NetCDF → PMTiles no S3 → catálogo `frames`.
+# Runtime shella binários GDAL + pmtiles (não há crate; ver Containerfile).
+[package]
+name = "coletor-c13"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "coletor-c13"
+path = "src/main.rs"
+
+[dependencies]
+comum.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+clap.workspace = true
+object_store.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true

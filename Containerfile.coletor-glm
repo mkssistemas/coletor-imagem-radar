@@ -1,0 +1,38 @@
+# Imagem do coletor-glm (raios LCFA → pontos no Postgres). Debian/glibc, multi-stage.
+#
+# Única imagem que carrega a libnetcdf (dynlib). É Debian/glibc — NÃO Alpine/musl
+# como o C13 — de propósito: o `hdf5-metno-sys` (dep do crate netcdf) infere a
+# versão do HDF5 via dlopen no build, e binário musl estático não faz dlopen
+# ("Dynamic loading not supported"). Em glibc funciona. Builder e runtime no
+# MESMO release Debian p/ casar o soname da libnetcdf/libhdf5.
+
+# ---- Stage 1: builder glibc ----
+FROM rust:bookworm AS builder
+# libnetcdf-dev: headers + .pc (puxa libhdf5-dev). pkg-config: netcdf-sys o usa.
+# clang: bindgen do *-sys. (gcc/cc já vêm na imagem rust.)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libnetcdf-dev pkg-config clang \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --release -p coletor-glm \
+ && cp /src/target/release/coletor-glm /coletor-glm
+
+# ---- Stage 2: runtime glibc ----
+FROM debian:bookworm-slim
+# libnetcdf19: a .so linkada dinamicamente (puxa libhdf5). ca-certificates: TLS
+# p/ S3 (origem) e Postgres.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libnetcdf19 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=builder /coletor-glm /usr/local/bin/coletor-glm
+RUN mkdir -p /app/data
+
+# config.toml montado em runtime (contém [database] e o produto GLM).
+ENTRYPOINT ["coletor-glm"]
+CMD ["run"]

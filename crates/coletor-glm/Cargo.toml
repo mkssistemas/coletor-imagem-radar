@@ -1,0 +1,20 @@
+# Coletor GLM: pontos de raio (LCFA) → catálogo `raios`/`raios_arquivos`.
+# Única crate que depende de `netcdf` (linka a libnetcdf do sistema — ver Containerfile).
+[package]
+name = "coletor-glm"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "coletor-glm"
+path = "src/main.rs"
+
+[dependencies]
+comum.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+netcdf.workspace = true
+object_store.workspace = true
+time.workspace = true
+tokio.workspace = true
+tracing.workspace = true

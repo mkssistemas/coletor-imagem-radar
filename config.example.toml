@@ -1,14 +1,24 @@
-# Configuração do Coletor de Imagem de Radar — GOES-19 (NODD → nosso S3).
-# Copie para `config.toml` e ajuste. Credenciais do destino (S3) vêm do AMBIENTE
-# (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY), nunca deste arquivo.
+# Configuração do Coletor de Imagem de Radar — GOES-19 (NODD → catálogo).
+#
+# São TRÊS binários (workspace), cada um com SEU config.toml:
+#   - coletor-c13: usa [source] [destination] [database] [pipeline] + o produto C13.
+#   - coletor-glm: usa [source] [database] [pipeline] + o produto GLM (ignora [destination]).
+#   - catalogo:    usa [database] [grpc] [destination] (p/ assinar URLs dos PMTiles).
+#
+# IMPORTANTE: cada coletor processa TODOS os `[[products]]` do seu arquivo com a
+# mesma cauda — então deixe APENAS o produto daquele binário em cada config.
+# (Este exemplo mostra os dois produtos; ao copiar, separe-os por serviço.)
+#
+# Credenciais do destino (S3) vêm do AMBIENTE (AWS_ACCESS_KEY_ID /
+# AWS_SECRET_ACCESS_KEY), nunca deste arquivo.
 
 [source]
 # Bucket público do NOAA NODD. Leitura anônima (sem assinatura).
 bucket = "noaa-goes19"
 region = "us-east-1"
 
+# Necessário p/ coletor-c13 (upload) e catalogo (assinar URLs). Ignorado pelo GLM.
 [destination]
-# Nosso S3 (AWS). Destino dos PMTiles.
 bucket = "qualle-satellite-data"
 region = "us-east-1"
 # Prefixo-raiz das chaves no destino (layout normalizado do plano).
@@ -16,8 +26,8 @@ prefix = "goes19"
 # Dev/teste: grava no filesystem local em vez do S3 (descomente).
 # local_path = "./out-s3"
 
-# --- Catálogo (Fase 3): Postgres. Credenciais AQUI (diferente do S3). ---
-# Exigido por `run` e `migrate`; `check` não precisa.
+# --- Catálogo: Postgres. Credenciais AQUI (diferente do S3). ---
+# Exigido por todos os binários (run/serve precisam; o coletor-glm escreve raios).
 [database]
 host = "localhost"
 port = 5432
@@ -30,27 +40,30 @@ dbname = "qualle"             # Timescale Cloud: "tsdb"
 # --- Pipeline (opcional; mostrados os defaults). ---
 # [pipeline]
 # work_dir = "data"                     # disco efêmero do bruto
-# c13_color_ramp = "assets/c13_noaa.txt"
-# state_path = "data/state.db"          # cache redb do dedupe
+# c13_color_ramp = "assets/c13_noaa.txt"  # só o coletor-c13; no container é /app/assets.
+#                                          # rodando local da raiz: crates/coletor-c13/assets/c13_noaa.txt
+# state_path = "data/state.db"          # cache redb do dedupe (um por coletor)
 
-# --- Servidor gRPC de consulta ao catálogo (subcomando `serve`; defaults). ---
-# Devolve metadado + URL pré-assinada (GET S3) do .pmtiles. Assinar exige as
-# credenciais AWS do destino no ambiente (mesmas do `run`); a identidade que
-# assina precisa de s3:GetObject no prefixo, senão o GET volta 403.
+# --- Servidor gRPC (binário `catalogo`; defaults). ---
+# Devolve metadado + URL pré-assinada (GET S3) do .pmtiles para frames, e os
+# pontos de raio inline para ListarRaios. Assinar exige as credenciais AWS do
+# destino no ambiente; a identidade precisa de s3:GetObject no prefixo.
 # [grpc]
 # listen = "0.0.0.0:50051"   # sobrescrevível por --listen
 # url_ttl_secs = 3600        # validade das URLs pré-assinadas
-# limite_pagina = 500        # teto/default de frames por página em ListarFrames
+# limite_pagina = 500        # teto/default por página (ListarFrames e ListarRaios)
 
-# --- Produtos (Fase 2+). No esqueleto podem ficar vazios. ---
+# --- Produtos. Deixe só o do binário correspondente em cada config.toml. ---
 
+# config.coletor-c13.toml:
 [[products]]
 name = "abi-l2-cmipf-c13"   # ch13: temp. de topo de nuvem (chuva)
 source_prefix = "ABI-L2-CMIPF"
 channel = "C13"
 poll_interval_secs = 120     # full disk ~10 min
 
+# config.coletor-glm.toml:
 [[products]]
-name = "glm-l2-lcfa"         # raios (Flash) — ~3 arquivos/min
+name = "glm-l2-lcfa"         # raios (flashes) — ~3 arquivos/min, ~20s cada
 source_prefix = "GLM-L2-LCFA"
 poll_interval_secs = 60

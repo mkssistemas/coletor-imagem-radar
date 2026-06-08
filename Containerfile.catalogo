@@ -1,0 +1,30 @@
+# Imagem do catalogo (servidor gRPC + migrate). Alpine/musl, multi-stage.
+#
+# Imagem enxuta: sem GDAL, sem netcdf. Só precisa de protoc no build (compila
+# proto/catalogo.proto via build.rs) e CA certs no runtime (TLS p/ Postgres e
+# para pré-assinar/validar credenciais AWS).
+
+# ---- Stage 1: builder musl ----
+FROM rust:alpine AS builder
+# build-base: ring/libsqlite3-sys (C). protoc/protobuf-dev: build.rs do catalogo.
+RUN apk add --no-cache build-base protoc protobuf-dev
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --release -p catalogo \
+ && cp /src/target/release/catalogo /catalogo
+
+# ---- Stage 2: runtime ----
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+
+WORKDIR /app
+COPY --from=builder /catalogo /usr/local/bin/catalogo
+
+# gRPC ouve em 0.0.0.0:50051 por default (grpc.listen).
+EXPOSE 50051
+# config.toml montado em runtime ([database] + [grpc]); AWS_* p/ assinar URLs.
+ENTRYPOINT ["catalogo"]
+CMD ["serve"]

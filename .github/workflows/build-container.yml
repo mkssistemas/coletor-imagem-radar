@@ -1,4 +1,4 @@
-name: Build Container Image
+name: Build Container Images
 
 on:
   push:
@@ -8,6 +8,12 @@ on:
 jobs:
   build-container:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image:
+          - catalogo
+          - coletor-c13
+          - coletor-glm
 
     steps:
       - uses: actions/checkout@v6
@@ -23,7 +29,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ./Containerfile
+          file: ./Containerfile.${{ matrix.image }}
           push: false
           outputs: type=oci,dest=/tmp/oci-image
 
@@ -31,7 +37,7 @@ jobs:
         run: |
           mkdir -p /tmp/release
           cd /tmp/oci-image
-          tar -czf /tmp/release/coletor-imagem-radar-${{ steps.version.outputs.VERSION }}.tar.gz *
+          tar -czf /tmp/release/${{ matrix.image }}-${{ steps.version.outputs.VERSION }}.tar.gz *
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v1

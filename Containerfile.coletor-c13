@@ -1,0 +1,38 @@
+# Imagem do coletor-c13 (ABI C13: raster → PMTiles). Alpine/musl, multi-stage.
+#
+# Runtime osgeo/gdal alpine-normal traz o que o pipeline shella: gdalwarp/
+# gdaldem/gdal_translate/gdaladdo e o gdal_calc.py (Python). Falta só o pmtiles
+# (binário Go), instalado abaixo. Tag do GDAL pinada (3.12.4); NÃO usar -latest.
+
+# ---- Stage 1: builder musl ----
+FROM rust:alpine AS builder
+# ring (cripto do rustls) e libsqlite3-sys compilam C → toolchain C.
+# (Sem protoc: o coletor-c13 não compila .proto — isso é só do `catalogo`.)
+RUN apk add --no-cache build-base
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/src/target \
+    cargo build --release -p coletor-c13 \
+ && cp /src/target/release/coletor-c13 /coletor-c13
+
+# ---- Stage 2: runtime ----
+FROM ghcr.io/osgeo/gdal:alpine-normal-3.12.4
+
+# pmtiles: binário Go estático (CGO off) → roda em musl.
+ARG PMTILES_VERSION=1.30.2
+ADD https://github.com/protomaps/go-pmtiles/releases/download/v${PMTILES_VERSION}/go-pmtiles_${PMTILES_VERSION}_Linux_x86_64.tar.gz /tmp/pmtiles.tar.gz
+RUN tar -xzf /tmp/pmtiles.tar.gz -C /usr/local/bin pmtiles \
+ && chmod +x /usr/local/bin/pmtiles \
+ && rm /tmp/pmtiles.tar.gz
+
+WORKDIR /app
+COPY --from=builder /coletor-c13 /usr/local/bin/coletor-c13
+# Rampa de cor do C13 (process.rs lê assets/c13_noaa.txt relativo ao cwd /app).
+COPY crates/coletor-c13/assets/ /app/assets/
+RUN mkdir -p /app/data
+
+# config.toml montado em runtime (contém [database]); S3 do destino via env AWS_*.
+ENTRYPOINT ["coletor-c13"]
+CMD ["run"]

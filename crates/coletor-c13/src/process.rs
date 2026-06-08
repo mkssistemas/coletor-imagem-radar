@@ -13,10 +13,10 @@ use tracing::{debug, info};
 /// Constantes de calibração do GOES-19 L2 (idênticas ao PoC).
 const SCALE: f64 = 0.06145332;
 const OFFSET: f64 = 89.620003;
-/// BBOX [oeste, sul, leste, norte] em EPSG:4326 — América do Sul + Atlântico,
-/// estendido a Oeste até ~Cidade do México (−100°W) a pedido dos meteorologistas:
-/// captura os sistemas sinóticos W→E que cruzam os Andes rumo ao Sul da AS.
-const BBOX: [f64; 4] = [-100.0, -56.0, -20.0, 13.0];
+/// BBOX [oeste, sul, leste, norte] em EPSG:4326 — cobertura compartilhada
+/// (definida em [`comum::BBOX`]): América do Sul + Atlântico, estendido a Oeste
+/// até ~Cidade do México a pedido dos meteorologistas.
+const BBOX: [f64; 4] = comum::BBOX;
 /// Resolução-alvo em metros (EPSG:3857). ~2 km, equivalente aos 0.018° do PoC.
 const TARGET_RES_M: &str = "2000";
 
@@ -56,6 +56,10 @@ async fn process_c13(job: &Job, work_dir: &Path, ramp: &Path) -> Result<PathBuf>
         .to_string();
 
     let tmp = work_dir.join(format!("tmp_{stem}"));
+    // Limpa intermediários de uma tentativa anterior (o tmp só é removido no
+    // sucesso): `gdal_calc.py` não tem --overwrite e aborta se o celsius.tif já
+    // existir, então um retry precisa de tmp limpo p/ ser idempotente.
+    tokio::fs::remove_dir_all(&tmp).await.ok();
     tokio::fs::create_dir_all(&tmp).await?;
 
     let celsius = tmp.join("celsius.tif");

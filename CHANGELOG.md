@@ -7,6 +7,33 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
 
+## [0.3.0] - 2026-06-05
+
+### Adicionado
+
+- **Coletor GLM (raios)** (`coletor-glm`): coleta GLM-L2-LCFA do NODD, parseia os
+  **flashes** (lat/lon WGS84, energia, área, qualidade, tempo sub-segundo via crate
+  `netcdf`/libnetcdf), clipa no BBOX da cobertura e grava **pontos** no catálogo.
+  Sem S3, sem tiles.
+- Catálogo de raios: hypertables `raios` (1 linha por flash) e `raios_arquivos`
+  (livro-razão, 1 linha por `.nc` — base do dedupe durável, inclusive arquivos sem
+  flash no BBOX). `State::mark_raios_done` (transação idempotente) e `hydrate` lendo
+  ambos os catálogos.
+- RPC gRPC **`ListarRaios`** (`bbox`/`de`/`ate`/`qualidade_max`/cursor): pontos
+  inline, do mais novo ao mais antigo; qualidade filtrada na consulta. Habilita o
+  "piscar em tempo real" no cliente.
+
+### Mudado
+
+- **Reorganizado em cargo workspace** com lib `comum` + 3 binários
+  (`coletor-c13`, `coletor-glm`, `catalogo`), para isolar deps de sistema por
+  imagem. O loop de pipeline virou genérico (trait `Processor`); cada coletor traz
+  só sua cauda.
+- **Três imagens OCI** (`Containerfile.{catalogo,coletor-c13,coletor-glm}`) +
+  `compose.yaml` com 3 serviços; só a imagem do GLM carrega libnetcdf. CI de
+  container em matriz; `migrate` migrou para o binário `catalogo`.
+- `BBOX` da cobertura agora é compartilhado em `comum` (recorte C13 e clip GLM).
+
 ## [0.2.1] - 2026-06-01
 
 ### Corrigido
@@ -51,7 +78,8 @@ e o projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 - Empacotamento OCI: `Containerfile` multi-stage + `compose.yaml`.
 - Destino S3-only (AWS S3 ou filesystem local em dev); MinIO removido.
 
-[Não lançado]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.2.1...HEAD
+[Não lançado]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/henrique-mks/coletor-imagem-radar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/henrique-mks/coletor-imagem-radar/releases/tag/v0.1.0

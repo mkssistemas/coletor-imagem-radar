@@ -3,9 +3,9 @@ data/
 out-s3/
 temp/
 .git/
-config.toml
+config*.toml
 aws.env
 *.env
-Containerfile
+Containerfile*
 compose.yaml
 .dockerignore

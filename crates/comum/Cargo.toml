@@ -1,0 +1,20 @@
+# Lib compartilhada: config, logging, convenções NODD, storage, catálogo
+# (Postgres + redb), queries e o loop genérico de pipeline. Sem tonic, sem netcdf.
+[package]
+name = "comum"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+futures.workspace = true
+object_store.workspace = true
+redb.workspace = true
+sea-orm.workspace = true
+serde.workspace = true
+time.workspace = true
+tokio.workspace = true
+toml.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

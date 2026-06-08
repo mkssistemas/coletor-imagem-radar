@@ -17,6 +17,11 @@ service Catalogo {
   // Frames numa janela temporal [de, ate], do mais novo ao mais antigo.
   // Paginado por cursor (ver ListarFramesResponse.proximo_cursor).
   rpc ListarFrames (ListarFramesRequest) returns (ListarFramesResponse);
+
+  // Raios (flashes GLM) numa janela bbox+temporal, do mais novo ao mais antigo.
+  // Devolve os pontos inline (sem URL/tile). Paginado por cursor sobre `tempo`.
+  // Uso "tempo real": pollar com de=último_visto, ate vazio, e animar no cliente.
+  rpc ListarRaios (ListarRaiosRequest) returns (ListarRaiosResponse);
 }
 
 // Espelha uma linha de `imagens_satelite.frames`, mais a URL derivada do tile.
@@ -59,5 +64,43 @@ message ListarFramesRequest {
 message ListarFramesResponse {
   repeated Frame frames = 1;
   // Presente se há mais páginas; passe em ListarFramesRequest.cursor.
+  optional string proximo_cursor = 2;
+}
+
+// Um flash GLM (ponto), espelhando uma linha de `imagens_satelite.raios`.
+message Raio {
+  google.protobuf.Timestamp tempo = 1;
+  double lat = 2;
+  double lon = 3;
+  // Energia radiante (J). Ausente se _FillValue na origem.
+  optional double energia = 4;
+  // Área de cobertura (m²). Ausente se _FillValue na origem.
+  optional double area = 5;
+  // flash_quality_flag (0 = bom).
+  uint32 qualidade = 6;
+}
+
+message ListarRaiosRequest {
+  // Default: a fonte fixa atual (noaa-goes-19).
+  optional string fonte = 1;
+  // BBOX [oeste, sul, leste, norte] em graus. Todos omitidos = toda a cobertura.
+  optional double oeste = 2;
+  optional double sul = 3;
+  optional double leste = 4;
+  optional double norte = 5;
+  // Janela temporal sobre `tempo`. Ambos opcionais (sem limite no lado omitido).
+  optional google.protobuf.Timestamp de = 6;
+  optional google.protobuf.Timestamp ate = 7;
+  // Máximo flash_quality_flag aceito. Omitido ⇒ 0 (só flashes de boa qualidade).
+  optional uint32 qualidade_max = 8;
+  // Máximo de pontos por página. 0 = default do servidor; capado no servidor.
+  uint32 limite = 9;
+  // Cursor opaco da página anterior. Vazio = primeira página.
+  optional string cursor = 10;
+}
+
+message ListarRaiosResponse {
+  repeated Raio raios = 1;
+  // Presente se há mais páginas; passe em ListarRaiosRequest.cursor.
   optional string proximo_cursor = 2;
 }

@@ -1,0 +1,28 @@
+# Catálogo: servidor gRPC de consulta (metadado de frames + pontos de raio) e
+# subcomando `migrate` (DDL de frames/raios). Sem GDAL, sem netcdf.
+[package]
+name = "catalogo"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "catalogo"
+path = "src/main.rs"
+
+[dependencies]
+comum.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+http.workspace = true
+object_store.workspace = true
+prost.workspace = true
+prost-types.workspace = true
+sea-orm.workspace = true
+time.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+tonic-prost.workspace = true
+tracing.workspace = true
+
+[build-dependencies]
+tonic-prost-build.workspace = true

@@ -1,9 +1,20 @@
-[package]
-name = "coletor-imagem-radar"
-version = "0.2.1"
+# Workspace do Coletor de Imagem de Radar (GOES-19 → catálogo).
+#
+# 3 binários + 1 lib compartilhada (`comum`), para que cada imagem de container
+# carregue só suas dependências de sistema:
+#   - coletor-c13: GDAL + pmtiles (raster → PMTiles no S3)
+#   - coletor-glm: libnetcdf       (pontos de raio → Postgres)
+#   - catalogo:    nada extra      (servidor gRPC de consulta)
+[workspace]
+resolver = "3"
+members = ["crates/comum", "crates/coletor-c13", "crates/coletor-glm", "crates/catalogo"]
+
+[workspace.package]
+version = "0.3.0"
 edition = "2024"
 
-[dependencies]
+# Versões pinadas e compartilhadas pelos crates (política: versão testada localmente).
+[workspace.dependencies]
 anyhow = "1.0.102"
 bytes = "1.11.1"
 clap = { version = "4.6.1", features = ["derive"] }
@@ -22,6 +33,7 @@ tonic = "0.14.6"
 tonic-prost = "0.14.6"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-
-[build-dependencies]
 tonic-prost-build = "0.14.6"
+# Leitura de NetCDF (só o coletor-glm). Linka a libnetcdf do sistema (dynlib).
+netcdf = "0.12.0"
+comum = { path = "crates/comum" }

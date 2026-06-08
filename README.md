@@ -1,49 +1,42 @@
 # Coletor de Imagem de Radar
 
-> Crate/binário: `coletor-imagem-radar`.
+> Cargo workspace. Binários: `coletor-c13`, `coletor-glm`, `catalogo`.
 
-Pipeline em Rust que **ingere** produtos GOES-19 do **NOAA NODD** (`noaa-goes19`, S3 público,
-`us-east-1`, leitura anônima), **processa** cada frame ABI C13 (NetCDF) em **PMTiles** prontos para
-mapa e os entrega no **nosso S3** (AWS). O bruto (`.nc`) é **efêmero**: baixado para disco, processado
-e **descartado após o upload** — não há espelho persistente.
+Coleta produtos GOES-19 do **NOAA NODD** (`noaa-goes19`, S3 público, `us-east-1`, leitura
+anônima). São **três binários** com responsabilidades (e dependências) separadas:
 
-Projeto separado da `qualle-control-api`; primeiro bloco do produto GOES-19.
-Stack: **Rust + tokio + `object_store` + GDAL**.
+- **`coletor-c13`** — **processa** cada frame ABI C13 (NetCDF) em **PMTiles** e entrega no
+  **nosso S3** (AWS); cataloga em `frames`. O bruto (`.nc`) é efêmero (delete-on-success).
+- **`coletor-glm`** — parseia GLM-L2-LCFA (raios) em **pontos** (flashes) e grava no
+  **Postgres** (`raios`). Sem S3, sem tiles.
+- **`catalogo`** — servidor gRPC de consulta (sem Kafka, sem push) + `migrate`.
 
-> Plano completo no Obsidian: `Projetos/Sincronizador GOES-19 NODD/Plano`.
+Projeto separado da `qualle-control-api`. Stack: **Rust + tokio + `object_store`** (+ GDAL no
+C13, + libnetcdf no GLM). Plano completo no Obsidian: `Projetos/Sincronizador GOES-19 NODD/Plano`.
 
 ## Status
 
-- **Fase 1 (esqueleto)** ✅ — config, clients S3 (origem anônima / destino), logging estruturado e
-  um `check` de conectividade.
-- **Fase 2 (loop end-to-end C13)** ✅ — `run` faz poll → download → processa (GDAL → PMTiles) →
-  upload → delete-on-success.
-- **Fase 3 (catálogo Postgres + dedupe persistente)** ✅ — catálogo no nosso Postgres (schema
-  `imagens_satelite`, hypertable TimescaleDB, via SeaORM; migration pelo subcomando `migrate`) +
-  cache local `redb` pro dedupe e janela de overlap. O dedupe é persistente: o catálogo é a fonte de
-  verdade e o redb é hidratado no boot com a janela recente (~48h).
-- **Lado consumidor (gRPC `serve`)** ✅ — servidor tonic que **consulta** o catálogo (sem Kafka, sem
-  push). Duas RPCs unárias — `UltimoFrame(produto, canal?)` e `ListarFrames(...)` (janela temporal,
-  paginada por cursor). Devolve **só metadado** + uma **URL pré-assinada** (GET S3) do `.pmtiles`; os
-  bytes trafegam por HTTP range request direto do bucket, nunca pelo gRPC.
-- **Empacotamento OCI** ✅ — `Containerfile` multi-stage + `compose.yaml`; CI no GitHub Actions.
-
-Fases seguintes: GLM/multiproduto e hardening (métricas/observabilidade). Plano completo no Obsidian:
-`Projetos/Sincronizador GOES-19 NODD/Plano`.
+- **C13 end-to-end** ✅ — poll → download → GDAL→PMTiles → upload → catálogo → delete.
+- **Catálogo Postgres + dedupe persistente** ✅ — hypertables TimescaleDB (via SeaORM) +
+  cache `redb`, hidratado no boot com a janela recente (~48h).
+- **GLM (raios)** ✅ — pontos por flash em `raios`; livro-razão `raios_arquivos` p/ dedupe
+  durável (cobre arquivos sem flash no BBOX).
+- **Consumidor gRPC** ✅ — `UltimoFrame`/`ListarFrames` (frames + URL pré-assinada do
+  `.pmtiles`) e `ListarRaios` (pontos inline; bbox/janela/qualidade; habilita "piscar" no cliente).
+- **Empacotamento OCI** ✅ — 3 imagens (`Containerfile.*`) + `compose.yaml`; CI no GitHub Actions.
 
 ## Uso
 
 ```sh
-cp config.example.toml config.toml   # ajuste buckets/prefixo + seção [database] e [grpc]
-cargo run -- check                   # valida config + lista a origem (dry-run, sem escrever)
-cargo run -- migrate                 # aplica as migrations do catálogo (schema imagens_satelite)
-cargo run -- run --once --limit 1    # uma passada do pipeline (download→processa→upload→catálogo→delete)
-cargo run -- run                     # loop contínuo (poll por produto)
-cargo run -- backfill --hours 48     # popula retroativo: varre as últimas N horas numa passada
-cargo run -- serve                   # servidor gRPC de consulta ao catálogo (UltimoFrame/ListarFrames)
+cp config.example.toml config.coletor-c13.toml   # um config por binário (só o seu produto)
+cargo run -p catalogo    -- migrate              # DDL: frames + raios + raios_arquivos
+cargo run -p coletor-c13 -- check                # valida config + lista a origem (dry-run)
+cargo run -p coletor-c13 -- run --once --limit 1 # 1 passada C13
+cargo run -p coletor-glm -- run --once --limit 1 # 1 passada GLM
+cargo run -p catalogo    -- serve                # gRPC (UltimoFrame/ListarFrames/ListarRaios)
 ```
 
-Credenciais do **destino S3** vêm SÓ do ambiente (nunca no TOML):
+Credenciais do **destino S3** vêm SÓ do ambiente (`coletor-c13` p/ upload, `catalogo` p/ assinar):
 
 ```sh
 export AWS_ACCESS_KEY_ID=...
@@ -51,32 +44,23 @@ export AWS_SECRET_ACCESS_KEY=...
 # AWS_SESSION_TOKEN opcional
 ```
 
-Credenciais do **Postgres** (catálogo) vêm da seção `[database]` do TOML. Os subcomandos `run`,
-`migrate` e `serve` exigem essa seção; `check` e `backfill` (dry-run) não.
-
-Logging: `RUST_LOG=coletor_imagem_radar=debug` para verbosidade; `SYNC_LOG_FORMAT=json` para JSON.
+Credenciais do **Postgres** (catálogo) vêm da seção `[database]` do TOML. Logging:
+`RUST_LOG=coletor_glm=debug,comum=debug`; `SYNC_LOG_FORMAT=json` para JSON.
 
 ### Dependências externas
 
-O processamento **shella binários** GDAL (`gdal_calc.py`, `gdalwarp`, `gdaldem`, `gdal_translate`,
-`gdaladdo`) + `pmtiles` — precisam estar no `PATH` para o `run` (não para `build`/`test`).
-`run`/`migrate`/`serve` precisam de um **Postgres** acessível. O `serve` ainda precisa das credenciais
-AWS do destino para **pré-assinar** as URLs GET — e a identidade IAM que assina precisa de
-`s3:GetObject` no prefixo (o usuário só-`PutObject` gera URLs que voltam **403** no fetch).
+- `coletor-c13`: binários GDAL (`gdal_calc.py`, `gdalwarp`, `gdaldem`, `gdal_translate`,
+  `gdaladdo`) + `pmtiles` no `PATH`.
+- `coletor-glm`: **libnetcdf** (dynlib; build precisa de `netcdf-dev`).
+- `catalogo`: `protoc` no build (compila o `.proto`); credenciais AWS p/ pré-assinar
+  (a identidade precisa de `s3:GetObject` no prefixo, senão o GET volta **403**).
+- Quem toca o banco precisa de um **Postgres/TimescaleDB** acessível.
 
-## Layout
+## Layout (workspace)
 
-| Módulo          | Papel                                                        |
-|-----------------|--------------------------------------------------------------|
-| `main.rs`       | CLI clap (`check`, `run`, `backfill`, `migrate`, `serve`).   |
-| `config.rs`     | Carga/validação do TOML (`[database]`, `[grpc]`).            |
-| `storage.rs`    | Constrói os clients `object_store` (origem anônima / destino) + signer p/ presign.|
-| `nodd.rs`       | Convenções de chave do NODD (prefixo `AAAA/DDD/HH`) + parser de timestamp.|
-| `pipeline.rs`   | Loop poll → download → processa → upload → catálogo → delete-on-success.|
-| `process.rs`    | Cadeia GDAL → PMTiles do C13.                                |
-| `state.rs`      | Estado híbrido: catálogo Postgres (SeaORM) + cache redb; dedupe + migrations.|
-| `query.rs`      | Queries read-only do catálogo p/ o gRPC (`ultimo_frame`, `listar_frames`).|
-| `serve.rs`      | Servidor gRPC (tonic): impl do serviço `Catalogo` + presign de URL.|
-| `grpc.rs`       | Código gerado do `.proto` (`include_proto!`).               |
-| `entity.rs`     | Entidade SeaORM da tabela `frames`.                         |
-| `logging.rs`    | Init do `tracing` (texto ou JSON).                          |
+| Crate | Papel |
+|-------|-------|
+| `comum` | Lib compartilhada: config, storage, nodd, `pipeline` (loop genérico + trait `Processor`), `state` (catálogo + dedupe), entidades (`entity`/`raio`), `query`. |
+| `coletor-c13` | Cauda raster (GDAL→PMTiles→S3→`frames`). |
+| `coletor-glm` | Cauda de pontos (parse LCFA→`raios`). |
+| `catalogo` | Servidor gRPC + `migrate` + `.proto`. |
