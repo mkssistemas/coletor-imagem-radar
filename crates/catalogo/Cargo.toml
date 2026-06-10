@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 comum.workspace = true
 anyhow.workspace = true
+cloudfront_sign.workspace = true
 clap.workspace = true
 http.workspace = true
 object_store.workspace = true

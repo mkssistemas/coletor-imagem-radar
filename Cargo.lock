@@ -337,6 +337,7 @@ version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
+ "cloudfront_sign",
  "comum",
  "http",
  "object_store",
@@ -435,6 +436,18 @@ name = "clap_lex"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
+
+[[package]]
+name = "cloudfront_sign"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "645d040530a8e39d8a31083d956c72ff77ec6dc13609763080b15360474c7d00"
+dependencies = [
+ "base64",
+ "rsa",
+ "sha1",
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "coletor-c13"
@@ -1687,7 +1700,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "thiserror",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "url",
@@ -2089,7 +2102,7 @@ dependencies = [
  "rustc-hash",
  "rustls",
  "socket2",
- "thiserror",
+ "thiserror 2.0.18",
  "tokio",
  "tracing",
  "web-time",
@@ -2110,7 +2123,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror",
+ "thiserror 2.0.18",
  "tinyvec",
  "tracing",
  "web-time",
@@ -2403,6 +2416,7 @@ dependencies = [
  "pkcs1",
  "pkcs8",
  "rand_core 0.6.4",
+ "sha1",
  "signature",
  "spki",
  "subtle",
@@ -2574,7 +2588,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "strum",
- "thiserror",
+ "thiserror 2.0.18",
  "time",
  "tracing",
  "url",
@@ -2888,7 +2902,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "smallvec",
- "thiserror",
+ "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-stream",
@@ -2976,7 +2990,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror",
+ "thiserror 2.0.18",
  "time",
  "tracing",
  "uuid",
@@ -3019,7 +3033,7 @@ dependencies = [
  "smallvec",
  "sqlx-core",
  "stringprep",
- "thiserror",
+ "thiserror 2.0.18",
  "time",
  "tracing",
  "uuid",
@@ -3046,7 +3060,7 @@ dependencies = [
  "serde",
  "serde_urlencoded",
  "sqlx-core",
- "thiserror",
+ "thiserror 2.0.18",
  "time",
  "tracing",
  "url",
@@ -3157,11 +3171,31 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.18",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

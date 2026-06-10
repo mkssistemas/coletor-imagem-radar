@@ -163,6 +163,18 @@ pub struct DestinationConfig {
     /// O layout normalizado do plano é montado a partir daqui.
     #[serde(default)]
     pub prefix: String,
+    /// Domínio CloudFront (ex: `abc123.cloudfront.net`). Se presente junto com
+    /// `cloudfront_key_pair_id` e `cloudfront_private_key_path`, o catálogo gera
+    /// CloudFront signed URLs (RSA-SHA1) em vez de S3 presigned URLs.
+    #[serde(default)]
+    pub cloudfront_domain: Option<String>,
+    /// ID do par de chaves CloudFront (ex: `KXXXXXXXXXXXXX`).
+    #[serde(default)]
+    pub cloudfront_key_pair_id: Option<String>,
+    /// Caminho para o arquivo PEM da chave privada RSA do CloudFront.
+    /// O conteúdo é lido no startup; o arquivo pode ser um secret montado no container.
+    #[serde(default)]
+    pub cloudfront_private_key_path: Option<String>,
 }
 
 /// Um produto GOES-19 a espelhar (ex.: ABI C13 full disk, GLM LCFA).

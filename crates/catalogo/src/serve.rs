@@ -7,7 +7,7 @@
 //! destino (via [`comum::storage`]).
 
 use std::sync::Arc;
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use http::Method;
@@ -28,7 +28,8 @@ use comum::config::Config;
 use comum::{entity, query, raio, state, storage};
 
 /// Sobe o servidor gRPC. Exige a seção `[database]` (como `run`/`migrate`); as
-/// credenciais AWS do destino (ambiente) são necessárias para assinar URLs.
+/// credenciais AWS do destino (ambiente) são necessárias para assinar URLs S3,
+/// ou os campos `cloudfront_*` do destino para CloudFront signed URLs.
 pub async fn run(config: &Config, listen_override: Option<String>) -> Result<()> {
     let db_cfg = config
         .database
@@ -36,14 +37,26 @@ pub async fn run(config: &Config, listen_override: Option<String>) -> Result<()>
         .context("subcomando `serve` exige a seção [database] na config")?;
     let db = state::connect(db_cfg).await?;
 
-    let signer = storage::build_destination_signer(&config.destination)?;
-    if signer.is_none() {
-        warn!("destino local (local_path): sem assinatura — Frame.url virá vazio");
+    let dest = &config.destination;
+    let cf = match (&dest.cloudfront_domain, &dest.cloudfront_key_pair_id, &dest.cloudfront_private_key_path) {
+        (Some(domain), Some(key_pair_id), Some(key_path)) => {
+            let private_key = std::fs::read_to_string(key_path)
+                .with_context(|| format!("lendo chave privada CloudFront em '{key_path}'"))?;
+            info!("assinatura CloudFront ativa (domínio: {domain})");
+            Some(CloudFrontConfig { domain: domain.clone(), key_pair_id: key_pair_id.clone(), private_key })
+        }
+        _ => None,
+    };
+
+    let signer = storage::build_destination_signer(dest)?;
+    if cf.is_none() && signer.is_none() {
+        warn!("destino local (local_path) e sem CloudFront: Frame.url virá vazio");
     }
 
     let svc = CatalogoService {
         db,
         signer,
+        cf,
         url_ttl: StdDuration::from_secs(config.grpc.url_ttl_secs),
         limite_pagina: config.grpc.limite_pagina,
     };
@@ -62,21 +75,48 @@ pub async fn run(config: &Config, listen_override: Option<String>) -> Result<()>
     Ok(())
 }
 
+struct CloudFrontConfig {
+    domain: String,
+    key_pair_id: String,
+    private_key: String,
+}
+
 struct CatalogoService {
     db: DatabaseConnection,
     /// `None` em modo de destino local (filesystem não pré-assina).
     signer: Option<Arc<AmazonS3>>,
+    /// Se presente, tem prioridade sobre `signer` para geração de URLs.
+    cf: Option<CloudFrontConfig>,
     url_ttl: StdDuration,
     limite_pagina: u32,
 }
 
 impl CatalogoService {
-    /// Assina um GET pré-assinado para `chave_destino`. Devolve `(url, expira_em)`;
-    /// `("", None)` quando não há signer (modo local).
+    /// Gera URL assinada para `chave_destino`. Prioridade: CloudFront → S3 → vazio.
     async fn assinar(
         &self,
         chave_destino: &str,
     ) -> Result<(String, Option<OffsetDateTime>), Status> {
+        if let Some(cf) = &self.cf {
+            let expires = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + self.url_ttl.as_secs();
+            let url = format!("https://{}/{}", cf.domain, chave_destino);
+            let opts = cloudfront_sign::SignedOptions {
+                key_pair_id: cf.key_pair_id.as_str().into(),
+                private_key: cf.private_key.as_str().into(),
+                date_less_than: expires,
+                ..Default::default()
+            };
+            let signed = cloudfront_sign::get_signed_url(&url, &opts)
+                .map_err(|e| Status::internal(format!("CloudFront sign '{chave_destino}': {e}")))?;
+            let expira = OffsetDateTime::from_unix_timestamp(expires as i64)
+                .unwrap_or_else(|_| OffsetDateTime::now_utc());
+            return Ok((signed, Some(expira)));
+        }
+
         let Some(signer) = &self.signer else {
             return Ok((String::new(), None));
         };

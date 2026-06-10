@@ -38,4 +38,5 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 tonic-prost-build = "0.14.6"
 # Leitura de NetCDF (só o coletor-glm). Linka a libnetcdf do sistema (dynlib).
 netcdf = "0.12.0"
+cloudfront_sign = "0.4"
 comum = { path = "crates/comum" }

@@ -25,6 +25,11 @@ region = "us-east-1"
 prefix = "goes19"
 # Dev/teste: grava no filesystem local em vez do S3 (descomente).
 # local_path = "./out-s3"
+# CloudFront signed URLs (opcional; substitui S3 presigned URLs para o catalogo).
+# Se os três campos estiverem presentes, as URLs dos PMTiles virão assinadas pelo CF.
+# cloudfront_domain = "abc123.cloudfront.net"
+# cloudfront_key_pair_id = "KXXXXXXXXXXXXX"
+# cloudfront_private_key_path = "/run/secrets/cloudfront.pem"
 
 # --- Catálogo: Postgres. Credenciais AQUI (diferente do S3). ---
 # Exigido por todos os binários (run/serve precisam; o coletor-glm escreve raios).

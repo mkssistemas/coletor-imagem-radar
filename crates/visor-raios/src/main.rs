@@ -33,7 +33,7 @@ struct Args {
     #[arg(long, default_value = "http://10.255.255.4:50051")]
     catalogo: String,
     /// Endereço HTTP local do visor.
-    #[arg(long, default_value = "127.0.0.1:8080")]
+    #[arg(long, default_value = "0.0.0.0:8080")]
     listen: String,
     /// Janela deslizante, em minutos.
     #[arg(long, default_value_t = 180)]
