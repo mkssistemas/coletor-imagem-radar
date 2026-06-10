@@ -10,7 +10,7 @@ resolver = "3"
 members = ["crates/comum", "crates/coletor-c13", "crates/coletor-glm", "crates/catalogo", "crates/visor-raios"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 
 # Versões pinadas e compartilhadas pelos crates (política: versão testada localmente).
